@@ -47,7 +47,7 @@ python3 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 
 pip install -r requirements.txt
-playwright install chromium
+python -m playwright install chromium
 ```
 
 ## Running Tests
