@@ -1,0 +1,115 @@
+name: Playwright UI Automation Tests
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Automation Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          pip install playwright
+          playwright install chromium
+          sudo apt-get install -y libasound2t64
+        
+
+      - name: Create artifact directories
+        run: |
+          mkdir -p reports allure-results screenshots videos traces
+
+      - name: Run Pytest suite
+        run: |
+          pytest \
+            --html=reports/report.html \
+            --self-contained-html \
+            --alluredir=allure-results \
+            -v \
+            --tb=short
+        env:
+          BASE_URL: https://books.toscrape.com/index.html
+          HEADLESS: "true"
+          RECORD_VIDEO: "true"
+          RANDOM_BOOK_COUNT: "5"
+          MAX_PAGES_IMAGE_CHECK: "5"
+        continue-on-error: true
+
+      - name: Generate Allure report
+        if: always()
+        uses: simple-elf/allure-report-action@master
+        with:
+          allure_results: allure-results
+          allure_report: allure-report
+          allure_history: allure-history
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-report
+          path: reports/report.html
+          retention-days: 30
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results/
+          retention-days: 30
+
+      - name: Upload Allure HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report/
+          retention-days: 30
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos
+          path: videos/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traces
+          path: traces/
+          if-no-files-found: ignore
+          retention-days: 30
