@@ -1,88 +1,168 @@
-from dataclasses import dataclass
+"""
+Page object for the homepage / book listing (catalogue) pages.
+
+Encapsulates every locator and interaction needed for:
+ - Heading validation
+ - Book listing retrieval
+ - Random book selection
+ - Pagination ("Next" button) handling
+ - Product image retrieval
+
+Locators are defined once as properties so that if the site markup changes,
+only this file needs to be updated (Open/Closed-friendly design).
+"""
+from __future__ import annotations
+
+import logging
+import random
 from typing import List
-from playwright.sync_api import Page
+from urllib.parse import urljoin
+
+from playwright.sync_api import Page, Locator
+
+from config.settings import settings
 from pages.base_page import BasePage
-from utils.config import Config
+from pages.models import BookSummary
 
-
-@dataclass
-class BookCard:
-    """Represents a single book item on the homepage."""
-    book_title: str
-    book_price: str
-    book_index: int
+logger = logging.getLogger(__name__)
 
 
 class HomePage(BasePage):
-    """Page object for the Books to Scrape homepage."""
+    """Page object representing the Books to Scrape homepage / listing pages."""
 
-    _BOOKS_SECTION = "section"
-    _BOOK_ITEMS = "article.product_pod"
-    _BOOK_TITLE = "h3 > a"
-    _BOOK_PRICE = "p.price_color"
-    _HEADINGS = "h1, h2, h3, h4, h5, h6"
-    _NEXT_BUTTON = "li.next > a"
-    _PRODUCT_IMAGES = "article.product_pod img"
+    # ------------------------------------------------------------------
+    # Locators (centralized so selectors are never duplicated elsewhere)
+    # ------------------------------------------------------------------
+    HEADINGS_SELECTOR = "h1, h2, h3, h4, h5, h6"
+    BOOKS_SECTION_SELECTOR = "section"
+    BOOK_ITEM_SELECTOR = "article.product_pod"
+    BOOK_TITLE_LINK_SELECTOR = "h3 a"
+    BOOK_PRICE_SELECTOR = "p.price_color"
+    BOOK_IMAGE_SELECTOR = "div.image_container img"
+    NEXT_BUTTON_SELECTOR = "li.next a"
+    ALL_LINKS_SELECTOR = "a"
 
     def __init__(self, page: Page) -> None:
         super().__init__(page)
 
-    def open(self) -> "HomePage":
-        self.navigate(Config.BASE_URL)
+    def load(self) -> "HomePage":
+        """Navigate to the homepage."""
+        self.goto(settings.HOME_PATH)
         return self
 
-    def get_url(self) -> str:
-        return self.current_url
+    # ------------------------------------------------------------------
+    # Heading validation helpers
+    # ------------------------------------------------------------------
+    @property
+    def headings_locator(self) -> Locator:
+        return self.page.locator(self.HEADINGS_SELECTOR)
 
-    def get_page_title(self) -> str:
-        return self.title
+    def get_visible_heading_texts(self) -> List[str]:
+        """Return text content of every *visible* heading element on the page."""
+        all_headings = self.headings_locator
+        visible_texts: List[str] = []
+        for i in range(all_headings.count()):
+            heading = all_headings.nth(i)
+            if heading.is_visible():
+                visible_texts.append(heading.text_content().strip())
+        return visible_texts
 
-    def get_all_headings(self) -> List[str]:
-        heading_locators = self._page.locator(self._HEADINGS).all()
-        return [h.inner_text().strip() for h in heading_locators if h.is_visible()]
+    # ------------------------------------------------------------------
+    # Books section helpers
+    # ------------------------------------------------------------------
+    @property
+    def books_section(self) -> Locator:
+        return self.page.locator(self.BOOKS_SECTION_SELECTOR)
 
-    def is_books_section_visible(self) -> bool:
-        return self.is_visible(self._BOOKS_SECTION)
+    @property
+    def book_items(self) -> Locator:
+        return self.page.locator(self.BOOK_ITEM_SELECTOR)
 
     def get_book_count(self) -> int:
-        return len(self._page.locator(self._BOOK_ITEMS).all())
+        return self.book_items.count()
 
-    def get_all_book_cards(self) -> List[BookCard]:
-        book_item_elements = self._page.locator(self._BOOK_ITEMS).all()
-        book_cards: List[BookCard] = []
-        for card_index, book_element in enumerate(book_item_elements):
-            title_element = book_element.locator(self._BOOK_TITLE)
-            price_element = book_element.locator(self._BOOK_PRICE)
-            book_title = title_element.get_attribute("title") or title_element.inner_text().strip()
-            book_price = price_element.inner_text().strip()
-            book_cards.append(
-                BookCard(
-                    book_title=book_title,
-                    book_price=book_price,
-                    book_index=card_index,
+    def get_all_books(self) -> List[BookSummary]:
+        """Extract title, price and detail URL for every book on the current page."""
+        books: List[BookSummary] = []
+        items = self.book_items
+        item_count = items.count()
+
+        for i in range(item_count):
+            item = items.nth(i)
+            title_link = item.locator(self.BOOK_TITLE_LINK_SELECTOR)
+            title = title_link.get_attribute("title") or title_link.text_content()
+            price = item.locator(self.BOOK_PRICE_SELECTOR).text_content()
+            href = title_link.get_attribute("href")
+            detail_url = self._resolve_url(href)
+
+            books.append(
+                BookSummary(
+                    title=title.strip(),
+                    price=price.strip(),
+                    detail_url=detail_url,
                 )
             )
-        return book_cards
+        return books
 
-    def click_book_by_index(self, index: int) -> None:
-        self._page.locator(self._BOOK_ITEMS).nth(index).locator(self._BOOK_TITLE).click()
-        self._page.wait_for_load_state("networkidle")
+    def get_random_books(self, sample_size: int = None) -> List[BookSummary]:
+        """Return a random, non-repeating sample of books from the homepage."""
+        sample_size = sample_size or settings.RANDOM_BOOK_SAMPLE_SIZE
+        all_books = self.get_all_books()
+        actual_sample_size = min(sample_size, len(all_books))
+        selected = random.sample(all_books, actual_sample_size)
+        logger.info(
+            "Randomly selected %d books: %s",
+            len(selected),
+            [b.title for b in selected],
+        )
+        return selected
+
+    def open_book(self, book: BookSummary) -> None:
+        """Navigate directly to a book's details page via its captured URL."""
+        self.goto_url(book.detail_url)
+
+    # ------------------------------------------------------------------
+    # Link collection (for broken-link validation)
+    # ------------------------------------------------------------------
+    def get_all_hrefs(self) -> List[str]:
+        """Collect every non-empty href on the current page as an absolute URL."""
+        anchors = self.page.locator(self.ALL_LINKS_SELECTOR)
+        hrefs: List[str] = []
+        count = anchors.count()
+        for i in range(count):
+            href = anchors.nth(i).get_attribute("href")
+            if href and not href.startswith("javascript:") and not href.startswith("#"):
+                hrefs.append(self._resolve_url(href))
+        return hrefs
+
+    # ------------------------------------------------------------------
+    # Image validation helpers
+    # ------------------------------------------------------------------
+    @property
+    def product_images(self) -> Locator:
+        return self.page.locator(self.BOOK_IMAGE_SELECTOR)
+
+    def get_image_count(self) -> int:
+        return self.product_images.count()
+
+    # ------------------------------------------------------------------
+    # Pagination helpers
+    # ------------------------------------------------------------------
+    @property
+    def next_button(self) -> Locator:
+        return self.page.locator(self.NEXT_BUTTON_SELECTOR)
 
     def has_next_page(self) -> bool:
-        return self._page.locator(self._NEXT_BUTTON).count() > 0
+        return self.next_button.count() > 0
 
-    def click_next_page(self) -> None:
-        self._page.locator(self._NEXT_BUTTON).click()
-        self._page.wait_for_load_state("networkidle")
+    def go_to_next_page(self) -> None:
+        """Click the pagination 'Next' button and wait for the new page to load."""
+        self.next_button.first.click()
+        self.wait_for_load()
 
-    def get_product_images(self) -> list:
-        return self._page.locator(self._PRODUCT_IMAGES).all()
-
-    def get_all_hrefs(self) -> List[str]:
-        anchor_elements = self._page.locator("a[href]").all()
-        href_set = set()
-        for anchor_element in anchor_elements:
-            href = anchor_element.get_attribute("href")
-            if href and href.strip():
-                href_set.add(href.strip())
-        return list(href_set)
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _resolve_url(self, href: str) -> str:
+        """Resolve a possibly-relative href against the current page URL."""
+        return urljoin(self.page.url, href)

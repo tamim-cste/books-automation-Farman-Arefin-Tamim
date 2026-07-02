@@ -1,24 +1,40 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-.env
-.venv/
-venv/
+*$py.class
 *.egg-info/
+.eggs/
+venv/
+.venv/
+env/
 
-# Test artifacts
-reports/
-allure-results/
-allure-report/
-allure-history/
-screenshots/
-videos/
-traces/
-test-results/
+# Pytest / reports
 .pytest_cache/
+test-results/*.html
+test-results/assets/
+allure-results/*
+allure-report/
+!allure-results/.gitkeep
 
-# IDE
+# Playwright artifacts
+screenshots/*
+videos/*
+traces/*
+!screenshots/.gitkeep
+!videos/.gitkeep
+!traces/.gitkeep
+playwright-report/
+test-results/*
+
+# Env files
+.env
+.env.local
+
+# Node (for allure-commandline if installed locally)
+node_modules/
+
+# OS / Editor
+.DS_Store
 .vscode/
 .idea/
 *.swp

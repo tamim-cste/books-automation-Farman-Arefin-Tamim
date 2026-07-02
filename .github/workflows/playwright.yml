@@ -1,23 +1,23 @@
-name: Playwright UI Automation Tests
+name: Playwright Tests
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
   test:
-    name: Run Automation Suite
-    runs-on: ubuntu-latest
+    name: Run Playwright Test Suite
     timeout-minutes: 30
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -29,49 +29,34 @@ jobs:
           pip install -r requirements.txt
 
       - name: Install Playwright browsers
-        run: |
-          pip install playwright
-          playwright install chromium
-          sudo apt-get install -y libasound2t64
-        
+        run: playwright install --with-deps chromium
 
       - name: Create artifact directories
-        run: |
-          mkdir -p reports allure-results screenshots videos traces
+        run: mkdir -p test-results allure-results screenshots videos traces
 
-      - name: Run Pytest suite
-        run: |
-          pytest \
-            --html=reports/report.html \
-            --self-contained-html \
-            --alluredir=allure-results \
-            -v \
-            --tb=short
+      - name: Run Playwright + Pytest suite
+        id: run_tests
+        run: pytest --browser chromium
         env:
-          BASE_URL: https://books.toscrape.com/index.html
           HEADLESS: "true"
-          RECORD_VIDEO: "true"
-          RANDOM_BOOK_COUNT: "5"
-          MAX_PAGES_IMAGE_CHECK: "5"
+          BASE_URL: "https://books.toscrape.com"
         continue-on-error: true
 
       - name: Generate Allure report
         if: always()
-        uses: simple-elf/allure-report-action@master
-        with:
-          allure_results: allure-results
-          allure_report: allure-report
-          allure_history: allure-history
+        run: |
+          npm install -g allure-commandline --no-progress
+          allure generate allure-results --clean -o allure-report
 
-      - name: Upload HTML report
+      - name: Upload HTML test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: html-report
-          path: reports/report.html
+          path: test-results/
           retention-days: 30
 
-      - name: Upload Allure results
+      - name: Upload Allure results (raw)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -79,7 +64,7 @@ jobs:
           path: allure-results/
           retention-days: 30
 
-      - name: Upload Allure HTML report
+      - name: Upload Allure report (generated)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -105,7 +90,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: Upload traces
+      - name: Upload trace files
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -113,3 +98,7 @@ jobs:
           path: traces/
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Fail job if tests failed
+        if: steps.run_tests.outcome == 'failure'
+        run: exit 1

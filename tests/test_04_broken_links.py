@@ -1,72 +1,52 @@
-# Third party imports
+"""
+Test Case 4: Broken Link Validation
+
+Collects every hyperlink on the homepage, deduplicates them, and verifies
+that each one returns a successful (HTTP 200) response.
+"""
 import allure
 import pytest
-import requests
-from playwright.sync_api import Page
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Internal imports
 from pages.home_page import HomePage
-from utils.config import Config
-from utils.helpers import build_absolute_url
+from utils.link_checker import LinkChecker
 
 
-@allure.feature("Link Validation")
-@allure.story("TC-04: Broken Link Detection")
-@pytest.mark.regression
-@pytest.mark.links
+@allure.feature("Link Integrity")
+@allure.story("Broken Link Validation")
 class TestBrokenLinks:
-    """ 
-    Test suite for detecting broken hyperlinks on the homepage.
-    """
+    """Validates that all hyperlinks on the homepage are reachable and return HTTP 200."""
 
+    @pytest.mark.regression
+    @pytest.mark.links
     @allure.title("All homepage hyperlinks return HTTP 200")
-    def test_no_broken_links(self, page: Page) -> None:
-        """
-        Send HTTP GET to every unique href and check for successful response.
-        """
-        home = HomePage(page).open()
-
-        with allure.step("Collect all anchor hrefs from homepage"):
-            raw_hrefs = home.get_all_hrefs()
-            assert raw_hrefs, "No hrefs found on the homepage"
-
-        with allure.step("Build absolute URLs"):
-            urls = list({
-                build_absolute_url(Config.BASE_DOMAIN, href)
-                for href in raw_hrefs
-                if not href.startswith("javascript:")
-                and not href.startswith("mailto:")
-                and not href.startswith("#")
-            })
+    @allure.severity(allure.severity_level.NORMAL)
+    def test_no_broken_links_on_homepage(self, home_page: HomePage):
+        with allure.step("Collect all anchor href values from the homepage"):
+            hrefs = home_page.get_all_hrefs()
+            unique_hrefs = sorted(set(hrefs))
             allure.attach(
-                "\n".join(sorted(urls)),
-                name=f"URLs to check ({len(urls)})",
+                "\n".join(unique_hrefs),
+                name="Unique URLs Checked",
                 attachment_type=allure.attachment_type.TEXT,
             )
 
-        broken: list[str] = []
-        session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0 (BooksTestBot/1.0)"})
+        with allure.step(f"Send requests to all {len(unique_hrefs)} unique URLs"):
+            checker = LinkChecker()
+            results = checker.check_all(unique_hrefs)
 
-        for url in urls:
-            with allure.step(f"GET {url}"):
-                try:
-                    response = session.get(url, timeout=Config.REQUEST_TIMEOUT, allow_redirects=True, verify=False)
-                    status = response.status_code
-                    if status not in (200, 301, 302):
-                        broken.append(f"{url} → HTTP {status}")
-                except requests.RequestException as exc:
-                    broken.append(f"{url} → ERROR: {exc}")
-
-        if broken:
-            allure.attach(
-                "\n".join(broken),
-                name="Broken Links",
-                attachment_type=allure.attachment_type.TEXT,
+        with allure.step("Verify every URL returned HTTP 200"):
+            broken = checker.get_broken_links(results)
+            if broken:
+                report_lines = [
+                    f"{r.url} -> status={r.status_code} error={r.error}"
+                    for r in broken
+                ]
+                allure.attach(
+                    "\n".join(report_lines),
+                    name="Broken Links",
+                    attachment_type=allure.attachment_type.TEXT,
+                )
+            assert not broken, (
+                f"Found {len(broken)} broken link(s):\n"
+                + "\n".join(f"{r.url} -> {r.status_code}" for r in broken)
             )
-
-        assert not broken, (
-            f"{len(broken)} broken link(s) found:\n" + "\n".join(broken)
-        )
